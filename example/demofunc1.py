@@ -1,7 +1,7 @@
 # -*- coding: UTF-8 -*-
 import sys
-reload(sys)
-sys.setdefaultencoding('utf-8')
+# reload(sys)
+# sys.setdefaultencoding('utf-8')
 
 import time
 from datetime import datetime

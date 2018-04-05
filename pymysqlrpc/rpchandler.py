@@ -12,7 +12,7 @@ from gevent import socket
 
 from .logicerror import LogicError
 
-SERVER_VERSION = '\n5.1.23-feihuroger\x00'
+SERVER_VERSION = b'\n5.1.23-feihuroger\x00'
 
 TYPENO = {
     'decimal':  0x00,  # FIELD_TYPE_DECIMAL
@@ -38,7 +38,7 @@ class RPCHandler(object):
         self.server = server
         self.aclmap = server.aclmap
 
-        self.buf = ""
+        self.buf = b""
         self.packetfull = False
         self.authed = False
         self.sid = -1
@@ -61,9 +61,9 @@ class RPCHandler(object):
             deal with all requests of one socket, run forever until the socket be breaked
         """
         self._structpacket(self._handshake())
-        self._sendall(''.join(self.datalist))
+        self._sendall(b''.join(self.datalist))
         # client socket is connecting
-        #self.log.info('%-8s: %s ' % ('conBEGIN',  self.client_address))
+        self.log.info('%-8s: %s ' % ('conBEGIN',  self.client_address))
         self.state['tcC'] += 1
         connclose = 0
         try:
@@ -73,11 +73,11 @@ class RPCHandler(object):
                     self.log.warning('%-8s: %s ' % ('conERR',  self.client_address))
                     break
                 self._data_received(data)
-        except socket.error, e:
-            if e[0] == errno.EBADF:
+        except socket.error as e:
+            if e.errno == errno.EBADF:
                 # 客户端socket 关闭
                 # client socket closed
-                # self.log.info('%-8s: %s ' % ('conCLOS1',  self.client_address))
+                self.log.info('%-8s: %s ' % ('conCLOS1',  self.client_address))
                 self.state['ncC'] += 1
                 connclose = 1
         except ValueError:
@@ -99,6 +99,7 @@ class RPCHandler(object):
         # 分包发送(不知什么愿意,有时在某些操作系统环境下,如果data超长,某些平台客户端会接收不全数据,卡在那里)
         # splite long data to some buffs, if data to long, some OS client can't receive all, will be hang up.
         ## self.socket.send(data)
+        print("Sending %r" % data)
         buffsize = 10240
         datalen = len(data)
         countbuff = int(datalen/buffsize)
@@ -120,17 +121,17 @@ class RPCHandler(object):
         return
 
     def _struct_simpleok(self):
-        OK_PACKET = '\x00\x00\x00\x02\x00\x00\x00'
+        OK_PACKET = b'\x00\x00\x00\x02\x00\x00\x00'
         self._structpacket(OK_PACKET)
         return
 
     def _struct_eof(self):
-        EOF_PACKET = '\xfe\x00\x00' + struct.pack("<H", 0)
+        EOF_PACKET = b'\xfe\x00\x00' + struct.pack("<H", 0)
         self._structpacket(EOF_PACKET)
         return
 
     def _struct_ok(self, arows, insertid, server_status, warning_count, message):
-        packet = '\x00'+self._encode_int(arows) + self._encode_int(insertid) + \
+        packet = b'\x00'+self._encode_int(arows) + self._encode_int(insertid) + \
             struct.pack("<H", server_status) + struct.pack("<H", warning_count)
         if message:
             packet += self._encode_str(message)
@@ -139,7 +140,7 @@ class RPCHandler(object):
 
     def _struct_error(self, errno, sqlstatus, message):
         assert len(sqlstatus) == 5, 'length of sqlstatus must be 5'
-        packet = '\xff'+struct.pack("<H", errno)+'#'+sqlstatus[:5]+message
+        packet = b'\xff'+struct.pack("<H", errno)+b'#'+sqlstatus[:5]+message
         self._structpacket(packet)
         return
 
@@ -155,19 +156,19 @@ class RPCHandler(object):
             columnname = self._encode_str(str(colname))
             typeno = TYPENO[pytype]
             packet = self._encode_str('def')+dbname+tablename+origintablename+columnname+columnname + \
-                '\x0c\x08\x00\x00\x00\x00\x00'+struct.pack("B", typeno)+'\x00\x00\x00\x00\x00\x00'
+                b'\x0c\x08\x00\x00\x00\x00\x00'+struct.pack("B", typeno)+b'\x00\x00\x00\x00\x00\x00'
             self._structpacket(packet)
             typelist.append(pytype)
-        eofpacket = '\xfe\x00\x00'+serverstatus
+        eofpacket = b'\xfe\x00\x00'+serverstatus
         self._structpacket(eofpacket)
         try:
             if len(dataset) :
                 for record in dataset:
-                    packet = ''
+                    packet = b''
                     assert len(record) == len(typelist), "Dataset's column count not equal title column count"
                     for pytype, cell in zip(typelist, record):
                         if cell is None:
-                            packet += '\xfb'
+                            packet += b'\xfb'
                         else:
                             if pytype == 'datetime':
                                 packet += self._encode_str(cell.strftime('%Y-%m-%d %H:%M:%S'))
@@ -184,28 +185,27 @@ class RPCHandler(object):
         else:
             astrlen = len(astr)
             header = self._encode_int(astrlen)
-            return header + astr
+            return header + astr.encode('utf-8')
 
     def _encode_int(self, aint):
         if aint is None:
-            return '\xfb'  # ascii=251 NULL
+            return b'\xfb'  # ascii=251 NULL
         elif aint <= 250:
             return struct.pack("B", aint)
         elif aint >= 251 and aint < 65536:
-            return '\xfc'+struct.pack("<H", aint)
-        elif aint >= 65536 and aint < 4294967296L:
-            return '\xfd'+struct.pack("<I", aint)
+            return b'\xfc'+struct.pack("<H", aint)
+        elif aint >= 65536 and aint < 4294967296:
+            return b'\xfd'+struct.pack("<I", aint)
         else:
-            aint1, aint2 = divmod(aint, 4294967296L)
-            return '\xfe'+struct.pack("<II", aint2, aint1)
+            aint1, aint2 = divmod(aint, 4294967296)
+            return b'\xfe'+struct.pack("<II", aint2, aint1)
         return
 
     def scramble(self, message, password):
-        stage1 = hashlib.sha1(password).digest()
+        stage1 = hashlib.sha1(password.encode('utf-8')).digest()
         stage2 = hashlib.sha1(stage1).digest()
         stage3 = hashlib.sha1(message+stage2).digest()
-        stage4 = map(lambda (x, y): chr(ord(x) ^ ord(y)), zip(stage1, stage3))
-        stage4 = ''.join(stage4)
+        stage4 = bytes([x ^ y for x, y in zip(stage1, stage3)])
         return stage4
 
     def _handshake(self):
@@ -215,13 +215,13 @@ class RPCHandler(object):
         """
         version = SERVER_VERSION
         thread_id = struct.pack("<I", random.randint(1, 65535))
-        self.sbuffer = ''.join(map(lambda _: chr(random.randint(33, 127)), range(20)))
+        self.sbuffer = b''.join(map(lambda _: bytes((random.randint(33, 127),)), range(20)))
         buffer_0 = self.sbuffer[:8]
         buffer_1 = self.sbuffer[8:]
         server_option = struct.pack("<H", 33288)
-        server_language = '\x08'
-        server_status = '\x02\x00'
-        packet = version+thread_id+buffer_0+'\x00'+server_option+server_language+server_status+'\x00'*13+buffer_1+'\x00'
+        server_language = b'\x08'
+        server_status = b'\x02\x00'
+        packet = version+thread_id+buffer_0+b'\x00'+server_option+server_language+server_status+b'\x00'*13+buffer_1+b'\x00'
         return packet
 
     def _data_received(self, data):
@@ -254,10 +254,10 @@ class RPCHandler(object):
                 else:
                     self.auth(cmdarg)
                 self.packetfull = False
-                self._sendall(''.join(self.datalist))
+                self._sendall(b''.join(self.datalist))
             except:
-                self._struct_error(9999, "HY000", "Internal server error. Close connection.")
-                self._sendall(''.join(self.datalist))
+                self._struct_error(9999, b"HY000", b"Internal server error. Close connection.")
+                self._sendall(b''.join(self.datalist))
                 self.socket.close()
                 self.log.error('%-8s: ip:%s' % ('dataRECV', self.client_address))
         return
@@ -279,63 +279,64 @@ class RPCHandler(object):
         client_option = struct.unpack("<I", data[:4])[0]
         max_packet_size = struct.unpack("<I", data[4:8])[0]
         charset = data[8]
-        assert data[9:32] == '\x00'*23
-        zeropos = data[32:].find('\x00')
+        assert data[9:32] == b'\x00'*23
+        zeropos = data[32:].find(b'\x00')
         zeropos += 32
         username = data[32:zeropos]
         # 预留了三个链接给root用户
         if self.server.pool is not None and \
            self.server.pool.free_count() <= 2 and \
-           username != 'root':
-            self._struct_error(1040, "08004", "pymysqlrpc Too many connections(TMC)")
-            self._sendall(''.join(self.datalist))
+           username != b'root':
+            self._struct_error(1040, b"08004", b"pymysqlrpc Too many connections(TMC)")
+            self._sendall(b''.join(self.datalist))
             self.socket.close()
             self.log.warning('%-8s: %s@%s ' % ('con2many',  username, self.client_address))
             return
 
-        if data[zeropos+1] == '\x14':
+        if data[zeropos+1] == 0x14:
             cbuffer = data[zeropos+2:zeropos+22]
             if len(data) > zeropos+22:
                 dbname = data[zeropos+22:-1]
             else:
                 dbname = 'pymysqlrpc'
-        elif data[zeropos+1] == '\x00':
+        elif data[zeropos+1] == 0:
             cbuffer = None
             dbname = None
         else:
-            raise ValueError("Auth packet error, %s" % repr(data))
+            raise ValueError("Auth packet error, zeropos=%s, %r, %s" % (zeropos, data[zeropos+1], repr(data)))
 
         try:
             self.state['taC'] += 1
             self.beginauthtime = time.time()  # this greenlet ,auth begin time
             # 先判断用户名是否存在，然后再判断密码是否错
-            if username in self.aclmap:
-                password, _ = self.aclmap[username]
+            username_str = username.decode('utf-8')
+            if username_str in self.aclmap:
+                password, _ = self.aclmap[username_str]
                 if self._auth(password, self.sbuffer, cbuffer, dbname, client_option, max_packet_size):
-                    self._struct_ok(0, 0, 2, 0, '')
+                    self._struct_ok(0, 0, 2, 0, b'')
                     self.authed = True
-                    self.username = username
-                    (_, self.gdict) = self.aclmap[username]
-                    #self.log.info('%-8s: %s@%s ' % ('authOK', username, self.client_address))
+                    self.username = username_str
+                    (_, self.gdict) = self.aclmap[username_str]
+                    self.log.info('%-8s: %s@%s ' % ('authOK', username_str, self.client_address))
                 else:
-                    self._structpacket('\xfe')
+                    self._structpacket(b'\xfe')
                     self.sid += 1
-                    self._structpacket('''\xff\x15\x04#28000Access denied (password is ERROR)''')
-                    self._sendall(''.join(self.datalist))
+                    self._structpacket(b'''\xff\x15\x04#28000Access denied (password is ERROR)''')
+                    self._sendall(b''.join(self.datalist))
                     self.socket.close()
-                    self.log.warning('%-8s: %s@%s ' % ('authERR', username, self.client_address))
+                    self.log.warning('%-8s: %s@%s %r' % ('authERR2', username_str, self.client_address, self.datalist))
                     self.state['eaC'] += 1
             else:
-                self._structpacket('\xfe')
+                self._structpacket(b'\xfe')
                 self.sid += 1
-                self._structpacket('''\xff\x15\x04#28000Access denied (username is ERROR)''')
-                self._sendall(''.join(self.datalist))
+                self._structpacket(b'''\xff\x15\x04#28000Access denied (username is ERROR)''')
+                self._sendall(b''.join(self.datalist))
                 self.socket.close()
-                self.log.warning('%-8s: %s@%s ' % ('authERR', username, self.client_address))
+                self.log.warning('%-8s: %s@%s ' % ('authERR', username_str, self.client_address))
                 self.state['eaC'] += 1
         except KeyError:
             self.state['eaC'] += 1
-            self._struct_error(500, "HY101", "Access denied: ")
+            self._struct_error(500, b"HY101", b"Access denied: ")
             self.socket.close()
             raise ValueError("Auth error, %s" % repr(data))
         return
@@ -392,8 +393,9 @@ class RPCHandler(object):
             core method, process the request of "call foo()"
         """
         cmd = cmdarg[0]
-        arg = cmdarg[1:]
-        if cmd == '\x03':
+        arg = cmdarg[1:].decode('utf-8')
+        print("_query %r %r %r" % (cmdarg, cmd, arg))
+        if cmd == 0x03:
             arg = arg.strip()
             offset = arg.find(' ')
             if offset != -1:
@@ -434,16 +436,16 @@ class RPCHandler(object):
                         else:
                             collist, dataset = self._toresultset(retvar)
                             self._struct_resultset(collist, dataset)
-                    except LogicError, ex:
+                    except LogicError as ex:
                         # 逻辑错误，也是我们主程序用在正确执行了过程，只是返回了错误结果中，所以也要记录 info
                         self.lastqueryENDtime = time.time()
                         request_time = 1000.0 * (self.lastqueryENDtime - self.lastqueryBEGtime)
                         if self.server.frameworklog:
                             self.log.info("%-8s: %s@%s:%10.03f s:%8.03fms:%s" % ('callOK2', self.username, self.client_address, self.lastqueryBEGtime, request_time, param))
-                        self._struct_error(ex.errno, "HY100", ex.errmsg)
-                    except Exception, ex:
+                        self._struct_error(ex.errno, b"HY100", ex.errmsg)
+                    except Exception as ex:
                         self.lastqueryENDtime = time.time()
-                        self._struct_error(500, "HY102", "func call 2: --"+str(ex)+"--:" + param[:100])
+                        self._struct_error(500, b"HY102", "func call 2: --"+str(ex)+"--:" + param[:100])
                         self.log.error('%-8s: %s@%s:%10.03f s:%s' % ('callBAD2', self.username, self.client_address, self.lastqueryBEGtime, param))
                         self.state['eqC'] += 1
                     finally:
@@ -469,26 +471,32 @@ class RPCHandler(object):
                     self._struct_simpleok()
                     return
 
-            elif query == 'set' or query == "show" or query == "select":
+            elif query == 'set':
                 # bypass like command as "SET xxx ", "SHOW yyyyy" ,"select zzz"
                 self._struct_simpleok()
+                return
+            elif query == "show":
+                self._struct_resultset([("lower_case_table_names",'int')], [])
+                return
+            elif query == "select":
+                self._struct_resultset([], [])
                 return
             else:
                 self.log.warning('%-8s: %s@%s:%s' % ('cmdBAD2', self.username, self.client_address, repr(cmdarg)))
                 self._struct_simpleok()
                 return
 
-        elif cmd == '\x01':  # mysql cmd quit;
+        elif cmd == 0x01:  # mysql cmd quit;
             self.socket.close()
-            #self.log.info('%-8s: %s@%s ' % ('authCLOS', self.username, self.client_address))
+            self.log.info('%-8s: %s@%s ' % ('authCLOS', self.username, self.client_address))
             return
-        elif cmd == '\x02':  # use somedb;
+        elif cmd == 0x02:  # use somedb;
             self._struct_simpleok()
             return
-        elif cmd == '\x1b':  # COM_SET_OPTION;
+        elif cmd == 0x1b:  # COM_SET_OPTION;
             self._struct_eof()
             return
-        elif cmd == '\x0e':  # mysql client ping
+        elif cmd == 0x0e:  # mysql client ping
             self._struct_simpleok()
             self.lastqueryBEGtime = self.lastqueryENDtime = time.time()
             return
@@ -498,7 +506,7 @@ class RPCHandler(object):
             return
 
     def callfunc(self, req, funcdict):
-        offset = req.find('(')
+        offset = req.find(b'(')
         if offset == -1:
             return 1, "--'(' NOT exist--"
         paramlist = []
@@ -508,7 +516,7 @@ class RPCHandler(object):
                 paramlist = paramast
             else:
                 paramlist.append(paramast)
-        except Exception, ex:
+        except Exception as ex:
             return 2, '--'+str(ex)+'--'
         if req[:offset] in funcdict:
             return 0, funcdict[req[:offset]](*paramlist)

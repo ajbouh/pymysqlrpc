@@ -21,6 +21,7 @@ pymysqlrpc is a very interesting, very simple RPC framework, implement mysql ser
       zip_safe=False,
       install_requires=[
           # -*- Extra requirements: -*-
+            "gevent",
       ],
       entry_points="""
       # -*- Entry points: -*-
